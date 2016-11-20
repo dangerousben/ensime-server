@@ -260,6 +260,10 @@ class JavaCompilerSpec extends EnsimeSpec with OptionValues
         "      System.out.@14@",
         "      privateVa@15@",
         "      int hashCode = \"Blah\".has@16@;",
+        "      testM@17@",
+        "    }",
+        "    private String testMethod(String foo, int bar) {",
+        "      return \"\";",
         "    }",
         "  }",
         "}") { (sf, offset, label, cc) =>
@@ -301,6 +305,10 @@ class JavaCompilerSpec extends EnsimeSpec with OptionValues
               c.typeInfo.value.name shouldBe "int"
             }
             case "16" => forAll(info.completions)(_.name shouldNot be("hash"))
+            case "17" => forAtLeast(1, info.completions) { c =>
+              c.name shouldBe "testMethod"
+              c.typeInfo.value.name shouldBe "(String foo, int bar): String"
+            }
           }
         }
     }

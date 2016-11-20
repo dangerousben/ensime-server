@@ -219,38 +219,27 @@ trait JavaCompletionsAtPoint { requires: JavaCompiler =>
     }
   }
 
-  private def methodName(e: ExecutableElement)(formatType: TypeMirror => String): String = {
-
-    val params = e.getParameters.asScala.map { param =>
-      val paramType = formatType(param.asType())
-      val paramName = param.getSimpleName
-      s"$paramType $paramName"
-    }.mkString("(", ", ", ")")
-
-    val returns = formatType(e.getReturnType)
-    val identifierName = e.getSimpleName
-
-    s"$returns $identifierName$params"
-  }
-
-  private def fullMethodName(t: ExecutableElement): String = methodName(t)(_.toString())
-  private def shortMethodName(t: ExecutableElement): String = methodName(t)(_.toString.split("\\.").last)
-
-  private def typeMirrorToTypeInfo(t: TypeMirror): TypeInfo =
-    BasicTypeInfo(t.toString, DeclaredAs.Class, t.toString)
-
   private def methodInfo(e: ExecutableElement, relevance: Int): CompletionInfo = {
 
-    val params = e.getParameters.asScala.map { param =>
-      param.getSimpleName.toString ->
-        typeMirrorToTypeInfo(param.asType())
-    }
+    def renderMethodType(params: Seq[String], ret: String) = params.mkString("(", ", ", ")") + ": " + ret
+    def typeMirrorToTypeInfo(t: TypeMirror): TypeInfo = BasicTypeInfo(localTypeName(t.toString), DeclaredAs.Class, t.toString)
+
+    val params = e.getParameters.asScala
+
+    val (shortParams, longParams) = params.map { param =>
+      val t = param.asType.toString
+      val n = param.getSimpleName
+      (s"${localTypeName(t)} $n", s"$t $n")
+    }.unzip
+
+    val ret = e.getReturnType.toString
 
     val typeInfo = ArrowTypeInfo(
-      shortMethodName(e), fullMethodName(e),
+      renderMethodType(shortParams, localTypeName(ret)),
+      renderMethodType(longParams, ret),
       typeMirrorToTypeInfo(e.getReturnType),
       ParamSectionInfo(
-        params,
+        params.map(param => param.getSimpleName.toString -> typeMirrorToTypeInfo(param.asType())),
         isImplicit = false
       ) :: Nil, Nil
     )
@@ -265,7 +254,7 @@ trait JavaCompletionsAtPoint { requires: JavaCompiler =>
   private def fieldInfo(e: VariableElement, relevance: Int): CompletionInfo = {
     val t = e.asType.toString
     CompletionInfo(
-      Some(BasicTypeInfo(t.substring(t.lastIndexOf('.') + 1), DeclaredAs.Field, t)), e.getSimpleName.toString, relevance, None
+      Some(BasicTypeInfo(localTypeName(t), DeclaredAs.Field, t)), e.getSimpleName.toString, relevance, None
     )
   }
 
@@ -283,9 +272,8 @@ trait JavaCompletionsAtPoint { requires: JavaCompiler =>
     }.toList
   }
 
-  private def localTypeName(tm: TypeMirror) = {
-    val s = tm.toString
-    val (front, back) = s.split("\\.").partition { s => s.forall(Character.isLowerCase) }
+  private def localTypeName(s: String) = {
+    val (front, back) = s.split("\\.").partition(!_.exists(Character.isUpperCase))
     if (back.isEmpty) s else back.mkString(".")
   }
 
