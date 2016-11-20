@@ -263,9 +263,9 @@ trait JavaCompletionsAtPoint { requires: JavaCompiler =>
   }
 
   private def fieldInfo(e: VariableElement, relevance: Int): CompletionInfo = {
-    val s = e.getSimpleName.toString
+    val t = e.asType.toString
     CompletionInfo(
-      None, s, relevance, None
+      Some(BasicTypeInfo(t.substring(t.lastIndexOf('.') + 1), DeclaredAs.Field, t)), e.getSimpleName.toString, relevance, None
     )
   }
 
