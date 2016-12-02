@@ -161,7 +161,7 @@ class JavaCompiler(
       contents.getOrElse(f.readStringDirect)
   }
 
-  private class JavaDiagnosticListener extends DiagnosticListener[JavaFileObject] with ReportHandler {
+  private class JavaDiagnosticListener extends DiagnosticListener[JavaFileObject] {
     def report(diag: Diagnostic[_ <: JavaFileObject]): Unit = {
       reportHandler.reportJavaNotes(List(
         Note(
@@ -185,7 +185,7 @@ class JavaCompiler(
     }
   }
 
-  private class SilencedDiagnosticListener extends DiagnosticListener[JavaFileObject] with ReportHandler {
+  private class SilencedDiagnosticListener extends DiagnosticListener[JavaFileObject] {
     def report(diag: Diagnostic[_ <: JavaFileObject]): Unit = {}
   }
 }
