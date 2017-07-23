@@ -4,15 +4,21 @@ package org.ensime.core.javac
 
 import java.io.{ File => JFile }
 import java.nio.charset.Charset
+import java.nio.file.Path
 import java.util.concurrent.ConcurrentHashMap
 import java.util.Locale
+import java.util.zip.ZipFile
 
 import scala.collection.JavaConverters._
+import scala.compat.java8.FunctionConverters._
 
 import akka.actor.ActorRef
 import akka.event.slf4j.SLF4JLogging
 import com.sun.source.tree.Scope
 import com.sun.source.util.{ JavacTask, TreePath }
+import com.sun.tools.javac.api.JavacTool
+import com.sun.tools.javac.file.RelativePath.RelativeFile;
+import com.sun.tools.javac.file.ZipArchive
 import com.sun.tools.javac.util.Abort
 import javax.tools._
 import org.ensime.api._
@@ -42,11 +48,12 @@ class JavaCompiler(
   private val silencer = new SilencedDiagnosticListener()
   private val cp = config.classpath.mkString(JFile.pathSeparator)
   private val workingSet = new ConcurrentHashMap[String, JavaFileObject]()
+  private val archiveCache = new ConcurrentHashMap[Path, ZipArchive]()
 
   private implicit def charset = Charset.defaultCharset() // how can we infer this?
 
-  lazy val compiler = ToolProvider.getSystemJavaCompiler()
-  lazy val fileManager: JavaFileManager = compiler.getStandardFileManager(listener, null, charset)
+  lazy val compiler = JavacTool.create()
+  lazy val fileManager = compiler.getStandardFileManager(listener, null, charset)
 
   def getTask(
     lint: String,
@@ -59,12 +66,18 @@ class JavaCompiler(
   }
 
   def createJavaFileObject(sf: SourceFileInfo): JavaFileObject = sf match {
-    case SourceFileInfo(f, None, None, _) =>
+    case SourceFileInfo(f: RawFile, None, None, _) =>
       new JavaObjectEnsimeFile(f, None)
-    case SourceFileInfo(f, None, Some(contentsIn), _) =>
+    case SourceFileInfo(f: RawFile, None, Some(contentsIn), _) =>
       new JavaObjectEnsimeFile(f, Some(contentsIn.readString))
-    case SourceFileInfo(f, contents, _, _) =>
+    case SourceFileInfo(f: RawFile, contents, _, _) =>
       new JavaObjectEnsimeFile(f, contents)
+    case SourceFileInfo(ArchiveFile(jar, entry), _, _, _) =>
+      val rf = new RelativeFile(entry.dropWhile(_ == '/'))
+      archiveCache.computeIfAbsent(
+        jar,
+        { jar: Path => new ZipArchive(fileManager, new ZipFile(jar.toFile)) }.asJava
+      ).getFileObject(rf.dirname, rf.basename)
   }
 
   def internSource(sf: SourceFileInfo): JavaFileObject = {
