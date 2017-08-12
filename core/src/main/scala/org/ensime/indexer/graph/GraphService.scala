@@ -119,16 +119,38 @@ object FileCheck extends ((String, Timestamp) => FileCheck) {
   def fromPath(path: String)(implicit vfs: EnsimeVFS): FileCheck = apply(vfs.vfile(path))
 }
 
+case class Job(name: String, items: Int, queuedTime: Option[Long] = None, startedTime: Option[Long] = None) {
+  def desc: String = s"$name:$items"
+
+  def sinceQueued(): Option[Long] = queuedTime.map(System.currentTimeMillis() - _)
+  def sinceStarted(): Option[Long] = startedTime.map(System.currentTimeMillis() - _)
+
+  def queued(): Job = copy(queuedTime = Some(System.currentTimeMillis()))
+  def started(): Job = copy(startedTime = Some(System.currentTimeMillis()))
+}
+
+object Job {
+  val current = new scala.util.DynamicVariable[Option[Job]](None)
+  def withCurrent[A](name: String, items: Int)(f: => A): A = current.withValue(Some(Job(name, items)))(f)
+}
+
 // core/it:test-only *Search* -- -z prestine
 class GraphService(dir: File) extends SLF4JLogging {
   import org.ensime.indexer.graph.GraphService._
+
+  lazy val csvWriter = {
+    val w = new java.io.PrintWriter(dir.getParent + "/graph-profile.csv")
+    w.println("Job,Items,Wait time,Run time,Total time,Remaining in queue")
+    w
+  }
 
   // all methods return Future, which means we can do isolation by
   // doing all work on a single worker Thread. We can't optimise until
   // we better understand the concurrency limitations (the fact that
   // we have to write dummy vertices to add edges doesn't help)
   private val pools = 1
-  private val executor = Executors.newSingleThreadExecutor(
+  private val executor = new java.util.concurrent.ThreadPoolExecutor(
+    1, 1, 0L, TimeUnit.MILLISECONDS, new java.util.concurrent.LinkedBlockingQueue[Runnable](),
     new ThreadFactory() {
       override def newThread(runnable: Runnable): Thread = {
         val thread = Executors.defaultThreadFactory().newThread(runnable)
@@ -137,7 +159,51 @@ class GraphService(dir: File) extends SLF4JLogging {
         thread
       }
     }
-  )
+  ) {
+    val jobs = scala.collection.concurrent.TrieMap[Runnable, Job]()
+
+    override def execute(r: Runnable) = {
+      Job.current.value.fold(log.error(s"No current job set while queuing $r", new Exception)) { job =>
+        log.debug(s"Queueing: $r: ${job.desc} (queue size ${getQueue.size})")
+        jobs.put(r, job.queued())
+      }
+      super.execute(r)
+    }
+
+    override def beforeExecute(t: Thread, r: Runnable) = {
+      for {
+        job <- jobs.get(r)
+        waitTime <- job.sinceQueued()
+      } yield {
+        log.debug(s"Starting: $r: ${job.desc} (waited $waitTime, queue size ${getQueue.size})")
+        jobs.put(r, job.started())
+      }.getOrElse(log.error(s"Failed to record start time for job $r (${jobs.get(r)})", new Exception))
+
+      super.beforeExecute(t, r)
+    }
+
+    override def afterExecute(r: Runnable, t: Throwable) = {
+      for {
+        job <- jobs.get(r)
+        totalTime <- job.sinceQueued()
+        runTime <- job.sinceStarted()
+      } yield {
+        val waitTime = totalTime - runTime
+        val queueSize = getQueue.size
+        log.debug(s"Finished: $r: ${job.desc} (waited $waitTime, took $runTime, total $totalTime, queue size: $queueSize)")
+        if (runTime > 1000) log.warn(s"Slow query: $r: ${job.desc} (took $runTime)")
+        csvWriter.println(s"${job.name},${job.items},$waitTime,$runTime,$totalTime,$queueSize")
+        csvWriter.flush()
+        jobs.remove(r)
+      }.getOrElse(log.error(s"Failed to record start time for job $r (${jobs.get(r)})", new Exception))
+
+      super.afterExecute(r, t)
+    }
+
+    def getTimeElapsed(r: Runnable, m: scala.collection.concurrent.TrieMap[Runnable, Long]) =
+      m.get(r).fold("NOT AVAILABLE")(t => s"${System.currentTimeMillis() - t} ms")
+  }
+
   private implicit val ec = ExecutionContext.fromExecutor(executor)
 
   private implicit lazy val db: OrientGraphFactory = {
@@ -204,18 +270,18 @@ class GraphService(dir: File) extends SLF4JLogging {
     log.info("... created the graph database")
   }
 
-  def knownFiles(): Future[Seq[FileCheck]] = withGraphAsync { implicit g =>
+  def knownFiles(): Future[Seq[FileCheck]] = withGraphAsync("knownFiles") { implicit g =>
     RichGraph.allV[FileCheck]
   }
 
-  def outOfDate(f: FileObject)(implicit vfs: EnsimeVFS): Future[Boolean] = withGraphAsync { implicit g =>
+  def outOfDate(f: FileObject)(implicit vfs: EnsimeVFS): Future[Boolean] = withGraphAsync("outOfDate") { implicit g =>
     RichGraph.readUniqueV[FileCheck, String](f.uriString) match {
       case None => true
       case Some(v) => v.toDomain.changed
     }
   }
 
-  def persist(symbols: Seq[SourceSymbolInfo]): Future[Int] = withGraphAsync { implicit g =>
+  def persist(symbols: Seq[SourceSymbolInfo]): Future[Int] = withGraphAsync("persist", symbols.size) { implicit g =>
     val checks = mutable.Map.empty[String, VertexT[FileCheck]]
     val classes = mutable.Map.empty[String, VertexT[ClassDef]]
 
@@ -308,43 +374,43 @@ class GraphService(dir: File) extends SLF4JLogging {
   /**
    * Removes given `files` from the graph.
    */
-  def removeFiles(files: List[FileObject]): Future[Int] = withGraphAsync { implicit g =>
+  def removeFiles(files: List[FileObject]): Future[Int] = withGraphAsync("removeFiles", files.size) { implicit g =>
     RichGraph.removeV(files.map(FileCheck(_)))
   }
 
   /**
    * Finds the FqnSymbol uniquely identified by `fqn`.
    */
-  def find(fqn: String): Future[Option[FqnSymbol]] = withGraphAsync { implicit g =>
+  def find(fqn: String): Future[Option[FqnSymbol]] = withGraphAsync("findSingle") { implicit g =>
     RichGraph.readUniqueV[FqnSymbol, String](fqn).map(_.toDomain)
   }
 
   /**
    * Finds all FqnSymbol's identified by unique `fqns`.
    */
-  def find(fqns: List[FqnIndex]): Future[List[FqnSymbol]] = withGraphAsync { implicit g =>
+  def find(fqns: List[FqnIndex]): Future[List[FqnSymbol]] = withGraphAsync("findMultiple", fqns.size) { implicit g =>
     fqns.flatMap(fqn =>
       RichGraph.readUniqueV[FqnSymbol, String](fqn.fqn).map(_.toDomain))
   }
 
-  def getClassHierarchy(fqn: String, hierarchyType: Hierarchy.Direction, levels: Option[Int]): Future[Option[Hierarchy]] = withGraphAsync { implicit g =>
+  def getClassHierarchy(fqn: String, hierarchyType: Hierarchy.Direction, levels: Option[Int]): Future[Option[Hierarchy]] = withGraphAsync("getClassHierarchy") { implicit g =>
     RichGraph.classHierarchy[String](fqn, hierarchyType, levels)
   }
 
-  def findUsageLocations(fqn: String): Future[Iterable[UsageLocation]] = withGraphAsync { implicit g =>
+  def findUsageLocations(fqn: String): Future[Iterable[UsageLocation]] = withGraphAsync("findUsageLocations") { implicit g =>
     RichGraph.findUsageLocations[String](fqn).map(_.toDomain).distinct
   }
 
-  def findUsages(fqn: String): Future[Iterable[FqnSymbol]] = withGraphAsync { implicit g =>
+  def findUsages(fqn: String): Future[Iterable[FqnSymbol]] = withGraphAsync("findUsages") { implicit g =>
     RichGraph.findUsages[String](fqn).map(_.toDomain)
   }
 
-  def findClasses(source: EnsimeFile): Future[Seq[ClassDef]] = withGraphAsync { implicit g =>
+  def findClasses(source: EnsimeFile): Future[Seq[ClassDef]] = withGraphAsync("findClassesFile") { implicit g =>
     val uri = Some(source.uriString)
     RichGraph.findV[ClassDef]("jdi") { c => c.source == uri }
   }
 
-  def findClasses(jdi: String): Future[Seq[ClassDef]] = withGraphAsync { implicit g =>
+  def findClasses(jdi: String): Future[Seq[ClassDef]] = withGraphAsync("findClassesJdi") { implicit g =>
     RichGraph.findV[ClassDef]("source") { c => c.jdi == Some(jdi) }
   }
 

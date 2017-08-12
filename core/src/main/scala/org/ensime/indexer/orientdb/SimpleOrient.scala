@@ -167,13 +167,15 @@ package object syntax {
   }
 
   // NOTE: although providing isolation, this destroys stacktraces
-  def withGraphAsync[T](
+  def withGraphAsync[T](name: String, items: Int = 1)(
     f: OrientBaseGraph => T
   )(
     implicit
     factory: OrientGraphFactory,
     ec: ExecutionContext
-  ): Future[T] = Future { blocking { withGraph(f) } }
+  ): Future[T] = org.ensime.indexer.graph.Job.withCurrent(name, items) {
+    Future { blocking { withGraph(f) } }
+  }
 
   // the presentation complier doesn't like it if we enrich the Graph,
   // so do it this way instead
