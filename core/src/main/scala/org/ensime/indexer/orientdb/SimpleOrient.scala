@@ -190,6 +190,14 @@ package object syntax {
     ec: ExecutionContext
   ): Future[T] = Future { blocking { withGraph(f) } }
 
+  def withGraphAsyncRo[T](
+    f: OrientBaseGraph => T
+  )(
+    implicit
+    factory: OrientGraphFactory
+  ): Future[T] =
+    withGraphAsync(f)(factory, ExecutionContext.Implicits.global)
+
   // the presentation complier doesn't like it if we enrich the Graph,
   // so do it this way instead
   object RichGraph extends SLF4JLogging {

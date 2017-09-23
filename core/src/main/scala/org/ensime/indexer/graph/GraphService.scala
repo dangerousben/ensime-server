@@ -147,7 +147,7 @@ class GraphService(dir: File) extends SLF4JLogging {
   // doing all work on a single worker Thread. We can't optimise until
   // we better understand the concurrency limitations (the fact that
   // we have to write dummy vertices to add edges doesn't help)
-  private val pools = 1
+  private val pools = 2
   private val executor = Executors.newSingleThreadExecutor(
     new ThreadFactory() {
       override def newThread(runnable: Runnable): Thread = {
@@ -163,8 +163,8 @@ class GraphService(dir: File) extends SLF4JLogging {
   private implicit lazy val db: OrientGraphFactory = {
     // http://orientdb.com/docs/2.1/Performance-Tuning.html
 
-    OGlobalConfiguration.USE_WAL.setValue(true)
-    OGlobalConfiguration.DISK_CACHE_SIZE.setValue(64) // 64MB is far more sensible than 4GB
+    OGlobalConfiguration.USE_WAL.setValue(false)
+    //    OGlobalConfiguration.DISK_CACHE_SIZE.setValue(64) // 64MB is far more sensible than 4GB
 
     Orient.setRegisterDatabaseByPath(true)
 
@@ -220,12 +220,12 @@ class GraphService(dir: File) extends SLF4JLogging {
     log.info("... created the graph database")
   }
 
-  def knownFiles(): Future[Seq[FileCheck]] = withGraphAsync { implicit g =>
+  def knownFiles(): Future[Seq[FileCheck]] = withGraphAsyncRo { implicit g =>
     RichGraph.allV[FileCheck]
   }
 
   def outOfDate(f: FileObject)(implicit vfs: EnsimeVFS): Future[Boolean] =
-    withGraphAsync { implicit g =>
+    withGraphAsyncRo { implicit g =>
       RichGraph.readUniqueV[FileCheck, String](f.uriString) match {
         case None    => true
         case Some(v) => v.toDomain.changed
@@ -393,7 +393,7 @@ class GraphService(dir: File) extends SLF4JLogging {
   /**
    * Finds the FqnSymbol uniquely identified by `fqn`.
    */
-  def find(fqn: String): Future[Option[FqnSymbol]] = withGraphAsync {
+  def find(fqn: String): Future[Option[FqnSymbol]] = withGraphAsyncRo {
     implicit g =>
       RichGraph.readUniqueV[FqnSymbol, String](fqn).map(_.toDomain)
   }
@@ -401,7 +401,7 @@ class GraphService(dir: File) extends SLF4JLogging {
   /**
    * Finds all FqnSymbol's identified by unique `fqns`.
    */
-  def find(fqns: List[FqnIndex]): Future[List[FqnSymbol]] = withGraphAsync {
+  def find(fqns: List[FqnIndex]): Future[List[FqnSymbol]] = withGraphAsyncRo {
     implicit g =>
       fqns.flatMap(
         fqn => RichGraph.readUniqueV[FqnSymbol, String](fqn.fqn).map(_.toDomain)
@@ -411,21 +411,21 @@ class GraphService(dir: File) extends SLF4JLogging {
   def getClassHierarchy(fqn: String,
                         hierarchyType: Hierarchy.Direction,
                         levels: Option[Int]): Future[Option[Hierarchy]] =
-    withGraphAsync { implicit g =>
+    withGraphAsyncRo { implicit g =>
       RichGraph.classHierarchy[String](fqn, hierarchyType, levels)
     }
 
   def findUsageLocations(fqn: String): Future[Iterable[UsageLocation]] =
-    withGraphAsync { implicit g =>
+    withGraphAsyncRo { implicit g =>
       RichGraph.findUsageLocations[String](fqn).map(_.toDomain).distinct
     }
 
-  def findUsages(fqn: String): Future[Iterable[FqnSymbol]] = withGraphAsync {
+  def findUsages(fqn: String): Future[Iterable[FqnSymbol]] = withGraphAsyncRo {
     implicit g =>
       RichGraph.findUsages[String](fqn).map(_.toDomain)
   }
 
-  def findClasses(source: EnsimeFile): Future[Seq[ClassDef]] = withGraphAsync {
+  def findClasses(source: EnsimeFile): Future[Seq[ClassDef]] = withGraphAsyncRo {
     implicit g =>
       val uri = Some(source.uriString)
       RichGraph.findV[ClassDef]("jdi") { c =>
@@ -433,7 +433,7 @@ class GraphService(dir: File) extends SLF4JLogging {
       }
   }
 
-  def findClasses(jdi: String): Future[Seq[ClassDef]] = withGraphAsync {
+  def findClasses(jdi: String): Future[Seq[ClassDef]] = withGraphAsyncRo {
     implicit g =>
       RichGraph.findV[ClassDef]("source") { c =>
         c.jdi == Some(jdi)
