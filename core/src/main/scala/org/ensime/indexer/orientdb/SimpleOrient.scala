@@ -79,7 +79,7 @@ package api {
   }
 }
 
-package object syntax {
+package object syntax extends SLF4JLogging {
   import org.ensime.indexer.orientdb.api.{ IndexT, Indexable }
 
   implicit class RichOrientGraph(graph: OrientExtendedGraph) {
@@ -181,6 +181,8 @@ package object syntax {
     finally g.shutdown()
   }
 
+  val ctr = new java.util.concurrent.atomic.AtomicInteger
+
   // NOTE: although providing isolation, this destroys stacktraces
   def withGraphAsync[T](
     f: OrientBaseGraph => T
@@ -188,15 +190,37 @@ package object syntax {
     implicit
     factory: OrientGraphFactory,
     ec: ExecutionContext
-  ): Future[T] = Future { blocking { withGraph(f) } }
+  ): Future[T] = {
+    val id = java.util.UUID.randomUUID().toString
+    log.info(s"starting graph write op $id (queue size ${ctr.incrementAndGet})")
+    val start = System.nanoTime()
+    val fut = Future { blocking { withGraph(f) } }
+    fut.onComplete { _ =>
+      val elapsed = ((System.nanoTime() - start) / 1000000).toInt + "ms"
+      log.info(
+        s"finished graph write op $id ($elapsed, queue size ${ctr.decrementAndGet})"
+      )
+    }
+    fut
+  }
 
   def withGraphAsyncRo[T](
     f: OrientBaseGraph => T
   )(
     implicit
     factory: OrientGraphFactory
-  ): Future[T] =
-    withGraphAsync(f)(factory, ExecutionContext.Implicits.global)
+  ): Future[T] = {
+    import ExecutionContext.Implicits.global
+    val id = java.util.UUID.randomUUID().toString
+    log.info(s"starting graph read op $id")
+    val start = System.nanoTime()
+    val fut = Future { blocking { withGraph(f) } }
+    fut.onComplete { _ =>
+      val elapsed = ((System.nanoTime() - start) / 1000000).toInt + "ms"
+      log.info(s"finished graph read op $id ($elapsed)")
+    }
+    fut
+  }
 
   // the presentation complier doesn't like it if we enrich the Graph,
   // so do it this way instead
