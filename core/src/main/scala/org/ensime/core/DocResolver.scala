@@ -3,6 +3,7 @@
 package org.ensime.core
 
 import akka.actor._
+import akka.event.LoggingReceive
 import java.io.{ File, IOException }
 import java.util.jar.JarFile
 import org.ensime.api._
@@ -174,7 +175,7 @@ class DocResolver(
   // for java stuff, really
   def resolve(sig: DocSig): Option[String] = resolve(DocSigPair(sig, sig))
 
-  def receive: Receive = {
+  def receive: Receive = LoggingReceive {
     case p: DocSigPair =>
       val response = resolve(p) match {
         case Some(path) => StringResponse(path)

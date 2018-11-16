@@ -17,5 +17,4 @@
   <logger name="org.scaladebugger" level="DEBUG" />
   <logger name="akka" level="DEBUG" />
   <logger name="scala.tools" level="WARN" />
-  <logger name="org.ensime.server.RichPresentationCompiler" level="WARN" />
 </configuration>

@@ -20,7 +20,7 @@ object ProjectPlugin extends AutoPlugin {
   override def trigger = allRequirements
 
   override def buildSettings = Seq(
-    scalaVersion := "2.12.5",
+    scalaVersion := "2.12.7",
     organization := "org.ensime",
 
     // so M2 releases don't impact SNAPSHOT versioning
@@ -59,6 +59,8 @@ object ProjectPlugin extends AutoPlugin {
 object EnsimeBuild {
   // common to the ensimeBuild, but not the testing projects
   lazy val commonSettings = Seq(
+    version := "2.2.0-SNAPSHOT",
+
     dependencyOverrides ++= Set(
        "com.typesafe.akka" %% "akka-actor" % akkaVersion.value,
        "com.typesafe.akka" %% "akka-testkit" % akkaVersion.value

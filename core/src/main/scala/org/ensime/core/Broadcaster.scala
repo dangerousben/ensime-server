@@ -3,6 +3,7 @@
 package org.ensime.core
 
 import akka.actor._
+import akka.event.LoggingReceive
 import scala.collection.immutable.ListSet
 
 /**
@@ -36,7 +37,7 @@ class Broadcaster extends Actor with ActorLogging {
   var subscribers = Set.empty[ActorRef]
   var persistant  = ListSet.empty[(ActorRef, Any)] // preserves order
 
-  def receive = {
+  def receive = LoggingReceive {
     case Register =>
       subscribers += sender()
       persistant.foreach {
