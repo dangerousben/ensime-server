@@ -39,7 +39,7 @@ class SearchService(
   implicit
   actorSystem: ActorSystem,
   serverConfig: EnsimeServerConfig,
-  val vfs: EnsimeVFS
+  private[indexer] val vfs: EnsimeVFS
 ) extends FileChangeListener
     with SLF4JLogging {
   import SearchService._
@@ -243,11 +243,11 @@ class SearchService(
     } yield (deletes, added)
   }
 
-  def refreshResolver(): Unit = resolver.update()
+  private def refreshResolver(): Unit = resolver.update()
 
-  def persist(symbols: List[SourceSymbolInfo],
-              commitIndex: Boolean,
-              boost: Boolean): Future[Int] = {
+  private[indexer] def persist(symbols: List[SourceSymbolInfo],
+                               commitIndex: Boolean,
+                               boost: Boolean): Future[Int] = {
     val iwork = index.persist(symbols, commitIndex, boost)
     val dwork = db.persist(symbols)
 
@@ -257,7 +257,7 @@ class SearchService(
     } yield inserts
   }
 
-  def extractSymbolsFromClassOrJar(
+  private[indexer] def extractSymbolsFromClassOrJar(
     file: FileObject,
     grouped: Map[FileName, Set[FileObject]]
   ): Future[List[SourceSymbolInfo]] = {
@@ -454,11 +454,11 @@ class SearchService(
    * the list of symbols is non-empty.
    */
 
-  val backlogActor =
+  private val backlogActor =
     actorSystem.actorOf(Props(new IndexingQueueActor(this)), "ClassfileIndexer")
 
   // deletion in both Lucene and H2 is really slow, batching helps
-  def deleteInBatches(
+  private def deleteInBatches(
     files: List[FileObject],
     batchSize: Int = 1000
   ): Future[Int] = {
@@ -467,7 +467,7 @@ class SearchService(
   }
 
   // returns number of rows removed
-  def delete(files: List[FileObject]): Future[Int] = {
+  private[indexer] def delete(files: List[FileObject]): Future[Int] = {
     // this doesn't speed up Lucene deletes, but it means that we
     // don't wait for Lucene before starting the H2 deletions.
     val iwork = index.remove(files)
